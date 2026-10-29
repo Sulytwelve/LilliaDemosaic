@@ -1,8 +1,8 @@
 # LilliaDemosaic
 
-一个极简的 BepInEx 6（IL2CPP）去马赛克插件：**每帧把马赛克贴片关掉**。
+一个极简的 BepInEx 6（IL2CPP）去马赛克插件：**让马赛克贴片不再被渲染**。
 
-A minimal demosaic plugin for BepInEx 6 (IL2CPP). It disables mosaic decal renderers every frame.
+A minimal demosaic plugin for BepInEx 6 (IL2CPP). It stops mosaic decal renderers from being rendered.
 
 ---
 
@@ -19,15 +19,20 @@ foreach (var r in _mosaicRenderers)
 
 关键点：**游戏每帧都会把它打开**，所以「只关一次」是没用的。
 
-本插件的做法：
+### 做法（v2）
 
-1. 每 `RefreshFrames` 帧扫描场景里的 `Renderer`；
-2. 判定「这个 renderer 是不是马赛克贴片」：
-   - 它的**全部**材质名都命中关键字 → 是（独立贴片通常只有一个材质）；
-   - 或者 renderer 名字命中关键字且它只有 1 个材质 → 是（材质名不规范的场合）；
-3. 在 `LateUpdate`（**晚于**游戏的 `Update`）里把它 `enabled = false`。
+1. **发现**：每帧做一次「脏探测」——读活动场景 `handle` 与 `rootCount`（2 次轻量调用），
+   变化了才全量重扫（15 帧限频）；`RefreshFrames` 周期扫描保留为兜底。
+   扫描用 `FindObjectsByType<Renderer>(FindObjectsInactive.Include, FindObjectsSortMode.None)`：
+   不排序（比 `FindObjectsOfType` 快），且能发现**未激活**的贴片。
+2. **判定**：renderer 的**全部**材质名都命中关键字 → 贴片；或 renderer 名命中且只有 1 个材质 → 贴片。
+   判定结果按 `InstanceID` 缓存（名字也有缓存），被动过的对象不重复计算。
+3. **执行**：给命中对象置 `Renderer.forceRenderingOff = true` —— 一次置位，之后游戏怎么翻 `enabled` 都画不出来，
+   不需要每帧对抗。每 30 帧低频复核一次是否被复位。
 
-因为覆盖发生在游戏开关之后，渲染时一定是关闭的 —— 不需要 Harmony 补丁，也不需要记任何函数地址或字段偏移，换游戏、换版本都不会失效。
+全程不需要 Harmony 补丁，也不依赖任何函数地址或字段偏移，换游戏、换版本都不会失效。
+若 `forceRenderingOff` 在当前 Unity 上不可用（异常），自动回退到 v1 的做法：
+在 `LateUpdate`（晚于游戏的 `Update`）里逐帧 `enabled = false`。
 
 ## 安装
 
@@ -61,17 +66,22 @@ MatchRendererName = true
 | 键 | 说明 |
 |---|---|
 | `Keywords` | 名称关键字，`/` 分隔，不区分大小写。新游戏先看日志里命中什么，不够就加 |
-| `RefreshFrames` | 重新扫描间隔（帧），120 ≈ 2 秒 |
+| `RefreshFrames` | 兜底重扫间隔（帧），120 ≈ 2 秒 |
 | `Mode` | `Dedicated` / `Materials` / `Both`，见下 |
 | `MatchRendererName` | renderer 名也参与匹配（限单材质 renderer） |
+
+配置改动即时生效：字符串重解析在回调里做，涉及 Unity 对象的操作会推迟到主线程下一帧执行
+（BepInEx 的配置监听可能在线程池线程触发，直接调 Unity API 会抛异常）。
 
 ### Mode
 
 | 值 | 行为 | 适用 |
 |---|---|---|
-| `Dedicated` | 只关闭「全部材质都是马赛克」的 renderer | 独立贴片，最安全，**默认** |
+| `Dedicated` | 只处理「全部材质都是马赛克」的 renderer | 独立贴片，最安全，**默认** |
 | `Materials` | 只把命中的那**一个材质**换成透明 shader | 身体与部位**合批进同一 renderer** 的游戏；若该材质是本体一部分会留洞 |
 | `Both` | 两种都做 | 不确定时用，覆盖面最广 |
+
+> `Materials` 会修改材质对象，且在会话内不可逆（`Enabled=false` 只恢复 renderer，不恢复材质）。
 
 ## 排查
 
@@ -79,12 +89,16 @@ MatchRendererName = true
 
 ```
 [Info : Lillia Demosaic] Lillia Demosaic loaded (mode=Dedicated)
-[Info : Lillia Demosaic] mosaic renderer: Pussy_Mosaic (1 mat)
+[Info : Lillia Demosaic] mosaic renderer: Sphere (1 mat)
+[Info : Lillia Demosaic] mosaic renderer: Pu**y_Mosaic (1 mat)
 ```
 
-- 有 `mosaic renderer:` → 已命中；
+- 有 `mosaic renderer:` → 已命中，且**每个对象只打印一次**（换场景 / 新实例才会再打），
+  所以「进游戏时出现两三行、之后不再输出」是正常的；
 - 没有但有马赛克 → 换 `Mode = Both`，或把游戏里那个对象的材质名加进 `Keywords`；
-- 出现 `neutralized material:` → 走的是材质替换（`Materials`/`Both`）。
+- 出现 `neutralized material:` → 走的是材质替换（`Materials`/`Both`）；
+- 出现 `scan failed:` → 扫描中途异常，插件会保留上一次的目标状态并继续工作，
+  把异常内容反馈出来即可。
 
 ## 已知不适用的情况
 
@@ -93,7 +107,22 @@ MatchRendererName = true
 - **全屏后期**马赛克（需要抓 post-process，思路完全不同）；
 - 非 IL2CPP 游戏（Mono 游戏请用 BepInEx 5 + 传统插件）。
 
+## 更新记录
+
+**v1.3** — 算法优化（实机验证：本插件命名来源作品，Unity 2022.3）
+
+- 发现：每 120 帧无差别盲扫 → 脏探测（场景/根对象变化）+ 兜底周期扫描；
+- 扫描：`FindObjectsByType(Include, None)` 取代 `FindObjectsOfType`，能发现未激活贴片；
+- 判定：名字缓存 + renderer 判定缓存，匹配改为零分配的大小写不敏感比较；
+- 执行：`forceRenderingOff` 一次置位取代逐帧 `enabled` 对抗（不可用时自动回退）；
+- 去重键由 native `Pointer` 改为 `InstanceID`（指针可能被复用）；
+- 修复：配置回调可能在线程池线程调 Unity API；扫描异常会丢失已关闭对象的状态。
+
+**v1.2** — 新增 `Mode`（`Dedicated`/`Materials`/`Both`）、`MatchRendererName`、日志去重、关键字补常见拼写错误。
+
+**v1.1** — 初版。
+
 ## 说明
 
-- 仅在个人环境的三款 Unity 2022.3 IL2CPP 作品上验证过，不保证通用；
+- 仅在个人环境的 Unity 2022.3 IL2CPP 作品上验证过（当前版本实测于命名来源作品），不保证通用；
 - 不修改游戏资源文件，只改运行时对象状态，退出即恢复。

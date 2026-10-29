@@ -69,6 +69,7 @@ MatchRendererName = true
 | `RefreshFrames` | 兜底重扫间隔（帧），120 ≈ 2 秒 |
 | `Mode` | `Dedicated` / `Materials` / `Both`，见下 |
 | `MatchRendererName` | renderer 名也参与匹配（限单材质 renderer） |
+| `MirrorEnabled` | 额外每帧把 `enabled` 写成 `false`（v1 行为）。默认 `false`，见「设计说明」 |
 
 配置改动即时生效：字符串重解析在回调里做，涉及 Unity 对象的操作会推迟到主线程下一帧执行
 （BepInEx 的配置监听可能在线程池线程触发，直接调 Unity API 会抛异常）。
@@ -111,8 +112,11 @@ MatchRendererName = true
 
 - **`forceRenderingOff` 不改 `enabled`**：这是 v2 与 v1 唯一的语义级差异。游戏自己的控制器每帧先写后读，
   两条路径下它读到的都是自己的值，没有区别；受影响的只是「帧内晚于 `LateUpdate` 读取 `enabled` 的第三方」——
-  v1 会看到 `false`，v2 会看到游戏设定的值。若某游戏确有这类读者，可在发现目标时顺手补一次
-  `enabled = false`（一次性，不逐帧对抗；渲染结果已由 `forceRenderingOff` 保证）。
+  v1 会看到 `false`，v2 会看到游戏设定的值。
+  若某个游戏确有这类读取者（表现为「马赛克没了但游戏逻辑异常」），把配置里的 `MirrorEnabled` 打开即可：
+  该模式下每帧在 `LateUpdate`（游戏 `Update` 之后）额外写一次 `enabled = false`，与 v1 的可观测行为完全一致，
+  成本也回到 v1 水平（每帧每目标一次写入），且**只在这一项为 true 时产生**。
+  注意不能只写一次：游戏每帧都会把自己的值写回去，一次性写入无法覆盖帧内后续的读取者。
 - **判定缓存淘汰**：`_nameCache` 与场景无关（同名同结论），永久保留；`_rendererCache` 每 10 次**兜底**扫描
   清一次（默认 120 帧/次，约 20 秒），用于收窄「游戏运行时替换材质」导致的陈旧判定。脏探测触发的重扫不清缓存——
   那个时刻新对象居多，缓存价值最低。被抵消的只是「跳过重判」的少量 interop 调用，字符串匹配开销仍由名字缓存吸收。

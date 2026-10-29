@@ -36,7 +36,7 @@ namespace LilliaDemosaic
     public class Plugin : BasePlugin
     {
         public const string Guid = "lillia.demosaic";
-        public const string Version = "1.3.2";
+        public const string Version = "1.3.3";
 
         internal static ManualLogSource Logger;
 
@@ -45,6 +45,7 @@ namespace LilliaDemosaic
         internal static ConfigEntry<int> CfgRefreshFrames;
         internal static ConfigEntry<DemosaicMode> CfgMode;
         internal static ConfigEntry<bool> CfgMatchRendererName;
+        internal static ConfigEntry<bool> CfgMirrorEnabled;
 
         public override void Load()
         {
@@ -65,9 +66,14 @@ namespace LilliaDemosaic
             CfgMatchRendererName = Config.Bind("General", "MatchRendererName", true,
                 "true = renderer 自身名字命中关键字、且它只有 1 个材质时, 也当作马赛克贴片。\n" +
                 "有些游戏材质名不规范 (如 Mosic_Back), 靠这条能命中。");
+            CfgMirrorEnabled = Config.Bind("General", "MirrorEnabled", false,
+                "true = 除了 forceRenderingOff, 每帧再把 enabled 写成 false (v1 的行为)。\n" +
+                "只有当游戏里有**在 LateUpdate 之后读取 renderer.enabled** 的第三方逻辑时才需要打开:\n" +
+                "默认的 forceRenderingOff 不改 enabled, 那些读取者会看到游戏自己设定的值。\n" +
+                "打开后每帧每个目标多一次写入 (成本与 v1 相同), 仅在本项为 true 时产生。");
 
             AddComponent<DemosaicBehaviour>();
-            Logger.LogInfo($"Lillia Demosaic loaded (mode={CfgMode.Value})");
+            Logger.LogInfo($"Lillia Demosaic loaded (mode={CfgMode.Value}, mirror={CfgMirrorEnabled.Value})");
         }
     }
 }

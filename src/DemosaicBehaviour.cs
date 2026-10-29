@@ -392,12 +392,16 @@ namespace LilliaDemosaic
         }
 
         /// <summary>
-        /// 回退路径: forceRenderingOff 不可用时, 保留 v1 "游戏开、我们关"的每帧对抗。
-        /// 主路径下此函数直接返回, 逐帧成本为零。
+        /// 两种情况下走这里:
+        ///  a) forceRenderingOff 不可用 → 退回 v1 的逐帧对抗 (功能降级);
+        ///  b) MirrorEnabled = true → 除渲染外, 还要让"读取 enabled 的第三方"看到 false。
+        ///     游戏在 Update 里每帧写回自己的值, 所以只写一次不够, 必须每帧在它之后写。
+        /// 主路径(默认 forceOffOk 且未开 Mirror)直接返回, 逐帧成本为零。
         /// </summary>
         private void LateUpdate()
         {
-            if (_forceOffOk || !Plugin.CfgEnabled.Value) return;
+            if (!Plugin.CfgEnabled.Value) return;
+            if (_forceOffOk && !Plugin.CfgMirrorEnabled.Value) return;
 
             for (int i = _targets.Count - 1; i >= 0; i--)
             {

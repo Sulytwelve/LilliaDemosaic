@@ -58,10 +58,12 @@ namespace LilliaDemosaic
         private bool _forceOffOk = true;          // forceRenderingOff 可用性 (false → 逐帧覆盖回退)
         private volatile bool _refreshPending;    // 配置变更请求重扫 (由主线程消费)
         private volatile bool _restorePending;    // 配置关闭请求恢复 (由主线程消费)
+        private volatile bool _configDirty;       // 关键字/模式变更: 需重建关键字表并清缓存
+        private volatile string _pendingKeywords; // 回调线程写入的新关键字 (引用赋值原子)
 
         /// <summary>
         /// 配置变更可能发生在任意线程 (BepInEx 的文件监听会在线程池线程触发 SettingChanged)。
-        /// Unity API 只能在主线程调用, 所以这里只置位, 由 Update 消费。
+        /// Unity API 与托管字典都不是线程安全的, 所以回调里只做"记录", 全部处理搬到主线程。
         /// </summary>
         private void RequestRefresh() => _refreshPending = true;
 
@@ -70,15 +72,28 @@ namespace LilliaDemosaic
             ParseKeywords(Plugin.CfgKeywords.Value);
             Plugin.CfgKeywords.SettingChanged += (_, __) =>
             {
-                ParseKeywords(Plugin.CfgKeywords.Value);
-                _nameCache.Clear();
-                _rendererCache.Clear();
-                RequestRefresh();
+                _pendingKeywords = Plugin.CfgKeywords.Value;   // 仅记录, 不碰缓存/不解析
+                _configDirty = true;
             };
-            Plugin.CfgMode.SettingChanged += (_, __) => { _rendererCache.Clear(); RequestRefresh(); };
-            Plugin.CfgMatchRendererName.SettingChanged += (_, __) => { _rendererCache.Clear(); RequestRefresh(); };
+            Plugin.CfgMode.SettingChanged += (_, __) => _configDirty = true;
+            Plugin.CfgMatchRendererName.SettingChanged += (_, __) => _configDirty = true;
             Plugin.CfgEnabled.SettingChanged += (_, __) => OnEnabledChanged();
             OnEnabledChanged();
+        }
+
+        /// <summary>主线程消费配置变更: 重建关键字表、清缓存、重扫。</summary>
+        private void ApplyPendingConfig()
+        {
+            _configDirty = false;
+            string kw = _pendingKeywords;
+            if (kw != null)
+            {
+                _pendingKeywords = null;
+                ParseKeywords(kw);
+                _nameCache.Clear();       // 名字→命中 的结论依赖关键字
+            }
+            _rendererCache.Clear();       // 判定依赖 Mode / MatchRendererName
+            Refresh();
         }
 
         private void OnEnabledChanged()
@@ -330,6 +345,7 @@ namespace LilliaDemosaic
             // 配置变更只能在主线程落地 (SettingChanged 可能来自线程池)
             if (_restorePending) { _restorePending = false; RestoreRenderers(); }
             if (!Plugin.CfgEnabled.Value) return;
+            if (_configDirty) ApplyPendingConfig();
             if (_refreshPending) { _refreshPending = false; Refresh(); }
 
             _frame++;

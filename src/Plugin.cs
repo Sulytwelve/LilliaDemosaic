@@ -36,7 +36,7 @@ namespace LilliaDemosaic
     public class Plugin : BasePlugin
     {
         public const string Guid = "lillia.demosaic";
-        public const string Version = "1.3.1";
+        public const string Version = "1.3.2";
 
         internal static ManualLogSource Logger;
 

@@ -32,6 +32,7 @@ namespace LilliaDemosaic
         private const int MaxMats = 8;          // 材质数超过视为身体部件 (沿用 v1 阈值)
         private const int DirtyCooldown = 15;   // 脏探测触发重扫的最小间隔 (帧), 防抖
         private const int VerifyFrames = 30;    // 复核 forceRenderingOff 的间隔 (帧)
+        private const int CacheSweepEvery = 10; // 每 K 次兜底扫描清一次 renderer 判定缓存 (收窄材质替换的陈旧窗口)
 
         // ---- 关键字 (已预转小写) ----
         private string[] _keywords = Array.Empty<string>();
@@ -49,6 +50,7 @@ namespace LilliaDemosaic
         private Shader _clearShader;
 
         private int _frame;
+        private int _fallbackScans;               // 兜底扫描计数 (缓存淘汰用)
         private int _lastDirty = -1000;           // 上次脏触发重扫的帧号
         private int _lastRootCount = int.MinValue;
         private int _lastSceneHandle = int.MinValue;
@@ -359,8 +361,15 @@ namespace LilliaDemosaic
 
             // 2) 兜底: 周期性全量重扫 (覆盖脏探测够不到的情况,
             //    如角色作为已有根对象的子物体生成)。RefreshFrames 语义不变。
+            //    顺带每 CacheSweepEvery 次兜底清一次 renderer 判定缓存:
+            //    游戏运行时替换材质时 (审计 R3), 陈旧结论最多存活 K 个兜底周期。
+            //    只清 renderer 级缓存; 名字级缓存与场景无关, 且 String 匹配开销已被它吸收。
             int every = Math.Max(1, Plugin.CfgRefreshFrames.Value);
-            if (_frame % every == 0) Refresh();
+            if (_frame % every == 0)
+            {
+                if (++_fallbackScans % CacheSweepEvery == 0) _rendererCache.Clear();
+                Refresh();
+            }
 
             // 3) 低频复核 forceRenderingOff (仅主路径需要; 回退路径走 LateUpdate)
             if (_forceOffOk && _frame % VerifyFrames == 0) VerifyTargets();

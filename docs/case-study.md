@@ -47,7 +47,7 @@ foreach (var r in _mosaicRenderers) r.enabled = show;   // 每帧都在改
 实测日志（本插件的 `mosaic renderer:` 行）：
 
 ```
-mosaic renderer: .../MainBody_Instance/Pussy_Mosaic (1 mat)     ← 材质 StrictMosaic
+mosaic renderer: .../MainBody_Instance/Pu**y_Mosaic (1 mat)     ← 材质 StrictMosaic
 mosaic renderer: .../Armature/Hips/Hips(Basis_body(B))/Sphere (1 mat)
 ```
 
